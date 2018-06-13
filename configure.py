@@ -13,6 +13,7 @@
 #   --eos=xxx         use xxx as the equation of state
 #   --flux=xxx        use xxx as the Riemann solver
 #   --nghost=xxx      set NGHOST=xxx
+#   --patch=xxx       add additional patch packages
 #   -b                enable magnetic fields
 #   -s                enable special relativity
 #   -g                enable general relativity
@@ -24,6 +25,8 @@
 #   -omp              enable parallelization with OpenMP
 #   -hdf5             enable HDF5 output (requires the HDF5 library)
 #   --hdf5_path=path  path to HDF5 libraries (requires the HDF5 library)
+#   -netcdf           enable NETCDF output (requires the NETCDF library)
+#   --netcdf_path=path path to NETCDF libraries (requires the NETCDF library)
 #   -fft              enable FFT (requires the FFTW library)
 #   --fftw_path=path  path to FFTW libraries (requires the FFTW library)
 #   --grav=xxx        use xxx as the self-gravity solver
@@ -38,12 +41,30 @@
 import argparse
 import glob
 import re
+import os
 
 # Set template and output filenames
 makefile_input = 'Makefile.in'
 makefile_output = 'Makefile'
 defsfile_input = 'src/defs.hpp.in'
 defsfile_output = 'src/defs.hpp'
+
+#--- Step 0. Read patch structure if the patch file exists -------------------------------
+patch = []
+if os.path.isfile('patch_files'):
+	with open('patch_files', 'r') as file:
+		for line in file.readlines():
+			line = line.split()
+			if len(line) > 0 and line[0][0] != '#':
+				fname = os.path.basename(line[0])
+				pname = line[0][:line[0].find('/')]
+				dname = re.sub(pname, 'src', line[0][:-len(fname)])
+				lname = '%s/%s' % (dname, fname)
+				if os.path.islink(lname):
+					os.remove(lname)
+				elif os.path.isfile(lname):
+					os.rename(lname, lname + '.old')
+				os.system('ln -s %s/%s %s' % (os.getcwd(), line[0], lname))
 
 #--- Step 1. Prepare parser, add each of the arguments -----------------------------------
 parser = argparse.ArgumentParser()
@@ -54,6 +75,7 @@ pgen_directory = 'src/pgen/'
 pgen_choices = glob.glob(pgen_directory + '*.cpp')
 # remove 'src/pgen/' prefix and '.cpp' extension from each filename
 pgen_choices = [choice[len(pgen_directory):-4] for choice in pgen_choices]
+
 parser.add_argument('--prob',
     default='shock_tube',
     choices=pgen_choices,
@@ -69,7 +91,7 @@ parser.add_argument('--coord',
 # --eos=[name] argument
 parser.add_argument('--eos',
     default='adiabatic',
-    choices=['adiabatic','isothermal'],
+    choices=['adiabatic','isothermal','shallow_water'],
     help='select equation of state')
 
 # --flux=[name] argument
@@ -82,6 +104,11 @@ parser.add_argument('--flux',
 parser.add_argument('--nghost',
     default='2',
     help='set number of ghost zones')
+
+# --patch=[names] argument
+parser.add_argument('--patch',
+    default='',
+    help='set patch files')
 
 # -b argument
 parser.add_argument('-b',
@@ -172,6 +199,18 @@ parser.add_argument('--hdf5_path',
     default='',
     help='path to HDF5 libraries')
 
+# -netcdf argument
+parser.add_argument('-netcdf',
+    action='store_true',
+    default=False,
+    help='enable NETCDF Output')
+
+# --netcdf_path argument
+parser.add_argument('--netcdf_path',
+    type=str,
+    default='',
+    help='path to NETCDF libraries')
+
 # --cxx=[name] argument
 parser.add_argument('--cxx',
     default='g++',
@@ -215,6 +254,8 @@ if args['flux'] == 'default':
     args['flux'] = 'hlld'
   elif args['eos'] == 'isothermal':
     args['flux'] = 'hlle'
+  elif args['eos'] == 'shallow_water':
+    args['flux'] = 'roe'
   else:
     args['flux'] = 'hllc'
 
@@ -225,6 +266,11 @@ if args['flux'] == 'hllc' and args['b']:
   raise SystemExit('### CONFIGURE ERROR: HLLC flux cannot be used with MHD')
 if args['flux'] == 'hlld' and not args['b']:
   raise SystemExit('### CONFIGURE ERROR: HLLD flux can only be used with MHD')
+if args['eos'] == 'shallow_water':
+  if args['flux'] == 'roe':
+    args['flux'] += '_shallow_water'
+  else:
+    raise SystemExit('### CONFIGURE ERROR: Shallow water model only be used with Roe flux')
 
 # Check relativity
 if args['s'] and args['g']:
@@ -266,6 +312,8 @@ makefile_options['EOS_FILE'] = args['eos']
 if args['eos'] == 'adiabatic':
   definitions['NHYDRO_VARIABLES'] = '5'
 if args['eos'] == 'isothermal':
+  definitions['NHYDRO_VARIABLES'] = '4'
+if args['eos'] == 'shallow_water':
   definitions['NHYDRO_VARIABLES'] = '4'
 
 # --flux=[name] argument
@@ -495,6 +543,17 @@ if args['h5double']:
 else:
   definitions['H5_DOUBLE_PRECISION_ENABLED'] = '0'
 
+# -netcdf argument
+if args['netcdf']:
+  definitions['NETCDF_OPTION'] = 'NETCDFOUTPUT'
+  if args['netcdf_path'] != '':
+    makefile_options['PREPROCESSOR_FLAGS'] += ' -I%s/include' % args['netcdf_path']
+    makefile_options['LINKER_FLAGS'] += ' -L%s/lib' % args['netcdf_path']
+  if args['cxx'] == 'g++' or args['cxx'] == 'icc' or args['cxx'] == 'cray':
+    makefile_options['LIBRARY_FLAGS'] += ' -lnetcdf'
+else:
+  definitions['NETCDF_OPTION'] = 'NO_NETCDFOUTPUT'
+
 # --ccmd=[name] argument
 if args['ccmd'] is not None:
   definitions['COMPILER_COMMAND'] = makefile_options['COMPILER_COMMAND'] = args['ccmd']
@@ -544,6 +603,7 @@ with open(makefile_output, 'w') as current_file:
 # Finish with diagnostic output
 print('Your Athena++ distribution has now been configured with the following options:')
 print('  Problem generator:       ' + args['prob'])
+print('  With Patch:              ' + ('None' if args['patch'] == '' else args['patch']))
 print('  Coordinate system:       ' + args['coord'])
 print('  Equation of state:       ' + args['eos'])
 print('  Riemann solver:          ' + args['flux'])
@@ -563,6 +623,7 @@ print('  OpenMP parallelism:      ' + ('ON' if args['omp'] else 'OFF'))
 print('  FFT:                     ' + ('ON' if args['fft'] else 'OFF'))
 print('  HDF5 output:             ' + ('ON' if args['hdf5'] else 'OFF'))
 print('  HDF5 precision:          ' + ('double' if args['h5double'] else 'single'))
+print('  NETCDF output:           ' + ('ON' if args['netcdf'] else 'OFF'))
 print('  Compiler:                ' + args['cxx'])
 print('  Compilation command:     ' + makefile_options['COMPILER_COMMAND'] + ' ' \
     + makefile_options['PREPROCESSOR_FLAGS'] + ' ' + makefile_options['COMPILER_FLAGS'])
