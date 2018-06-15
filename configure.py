@@ -52,19 +52,19 @@ defsfile_output = 'src/defs.hpp'
 #--- Step 0. Read patch structure if the patch file exists -------------------------------
 patch = []
 if os.path.isfile('patch_files'):
-	with open('patch_files', 'r') as file:
-		for line in file.readlines():
-			line = line.split()
-			if len(line) > 0 and line[0][0] != '#':
-				fname = os.path.basename(line[0])
-				pname = line[0][:line[0].find('/')]
-				dname = re.sub(pname, 'src', line[0][:-len(fname)])
-				lname = '%s/%s' % (dname, fname)
-				if os.path.islink(lname):
-					os.remove(lname)
-				elif os.path.isfile(lname):
-					os.rename(lname, lname + '.old')
-				os.system('ln -s %s/%s %s' % (os.getcwd(), line[0], lname))
+  with open('patch_files', 'r') as file:
+    for line in file.readlines():
+      line = line.split()
+      if len(line) > 0 and line[0][0] != '#':
+        fname = os.path.basename(line[0])
+        pname = line[0][:line[0].find('/')]
+        dname = re.sub(pname, 'src', line[0][:-len(fname)])
+        lname = '%s/%s' % (dname, fname)
+        if os.path.islink(lname):
+          os.remove(lname)
+        elif os.path.isfile(lname):
+          os.rename(lname, lname + '.old')
+        os.system('ln -s %s/%s %s' % (os.getcwd(), line[0], lname))
 
 #--- Step 1. Prepare parser, add each of the arguments -----------------------------------
 parser = argparse.ArgumentParser()
@@ -108,6 +108,7 @@ parser.add_argument('--nghost',
 # --patch=[names] argument
 parser.add_argument('--patch',
     default='',
+    choices = ['', 'drum'],
     help='set patch files')
 
 # -b argument
